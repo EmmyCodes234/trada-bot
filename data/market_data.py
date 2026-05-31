@@ -25,6 +25,7 @@ def get_stock_data(
         df = ticker.history(period=period, interval=interval)
         if df.empty:
             return None
+        df.columns = [c.lower() for c in df.columns]
         return df
     except Exception as e:
         logger.warning(f"yfinance failed for {symbol}: {e}")
@@ -61,6 +62,7 @@ def get_crypto_data(
     try:
         df = yf.Ticker(f"{base}-USD").history(period="2mo", interval="1d")
         if df is not None and not df.empty:
+            df.columns = [c.lower() for c in df.columns]
             logger.info(f"Got {len(df)} rows from yfinance for {base}-USD")
             return df
     except Exception as e:
