@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: trada-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: OPENMODEL_API_KEY
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: BINANCE_TESTNET_API_KEY
+        sync: false
+      - key: BINANCE_TESTNET_SECRET
+        sync: false
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
