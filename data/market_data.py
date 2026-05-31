@@ -8,10 +8,10 @@ logger = logging.getLogger(__name__)
 
 COINGECKO_IDS = {
     "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "DOGE": "dogecoin",
-    "XRP": "ripple", "ADA": "cardano", "DOT": "polkadot", "AVAX": "avalanche-2",
+    "XRP": "ripple", "ADA": "cardano", "DOT": "polkadot",
     "LINK": "chainlink", "MATIC": "polygon", "UNI": "uniswap", "ATOM": "cosmos",
     "LTC": "litecoin", "BCH": "bitcoin-cash", "TRX": "tron", "BNB": "binancecoin",
-    "NEAR": "near", "OP": "optimism", "ARB": "arbitrum", "PEPE": "pepe",
+    "NEAR": "near", "OP": "optimism", "ARB": "arbitrum",
 }
 
 

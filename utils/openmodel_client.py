@@ -9,10 +9,11 @@ class OpenModelClient:
         self.model = settings.analysis_model
 
     async def chat(self, system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
+        url = f"{self.base_url}/v1/messages"
         payload = {
             "model": self.model,
+            "system": system_prompt,
             "messages": [
-                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": temperature,
@@ -20,12 +21,14 @@ class OpenModelClient:
         }
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
-                f"{self.base_url}/v1/chat/completions",
+                url,
                 headers={
-                    "Authorization": f"Bearer {self.api_key}",
+                    "x-api-key": self.api_key,
                     "Content-Type": "application/json",
+                    "anthropic-version": "2023-06-01",
                 },
                 json=payload,
             )
             resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
+            data = resp.json()
+            return data["content"][0]["text"]
