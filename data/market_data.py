@@ -39,36 +39,44 @@ def get_crypto_data(
     base = symbol.split("/")[0].upper()
     coin_id = COINGECKO_IDS.get(base)
 
+    headers = {"User-Agent": "TradaBot/1.0"}
     if coin_id:
         try:
-            days = limit
             url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
-            params = {"vs_currency": "usd", "days": str(days)}
-            resp = httpx.get(url, params=params, timeout=15)
+            params = {"vs_currency": "usd", "days": str(limit)}
+            resp = httpx.get(url, params=params, headers=headers, timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
-                df = pd.DataFrame(
-                    data,
-                    columns=["timestamp", "open", "high", "low", "close"],
-                )
-                df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-                df.set_index("timestamp", inplace=True)
-                df["volume"] = 0
-                logger.info(f"Got {len(df)} rows from CoinGecko for {base}")
-                return df
-            else:
-                logger.warning(f"CoinGecko returned {resp.status_code} for {coin_id}")
+                if isinstance(data, list) and len(data) > 0:
+                    df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close"])
+                    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+                    df.set_index("timestamp", inplace=True)
+                    df["volume"] = 0
+                    logger.info(f"Got {len(df)} rows from CoinGecko for {base}")
+                    return df
+            logger.warning(f"CoinGecko failed: status={resp.status_code}")
         except Exception as e:
-            logger.warning(f"CoinGecko failed for {coin_id}: {e}")
+            logger.warning(f"CoinGecko error for {coin_id}: {e}")
 
-    yahoo_symbol = f"{base}-USD"
     try:
-        df = yf.Ticker(yahoo_symbol).history(period="2mo", interval="1d")
+        df = yf.Ticker(f"{base}-USD").history(period="2mo", interval="1d")
         if df is not None and not df.empty:
-            logger.info(f"Got {len(df)} rows from yfinance for {yahoo_symbol}")
+            logger.info(f"Got {len(df)} rows from yfinance for {base}-USD")
             return df
     except Exception as e:
-        logger.warning(f"yfinance crypto fallback failed for {yahoo_symbol}: {e}")
+        logger.warning(f"yfinance failed for {base}-USD: {e}")
+
+    try:
+        import ccxt
+        ex = ccxt.binance()
+        ohlcv = ex.fetch_ohlcv(symbol, timeframe="1d", limit=limit)
+        df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+        logger.info(f"Got {len(df)} rows from Binance for {symbol}")
+        return df
+    except Exception as e:
+        logger.warning(f"Binance failed for {symbol}: {e}")
 
     return None
 

@@ -83,7 +83,9 @@ async def analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text = _format_analysis(symbol, analysis, data)
         await msg.edit_text(text, parse_mode="Markdown")
     except Exception as e:
-        await msg.edit_text(f"Error: {e}")
+        import logging, traceback
+        logging.getLogger(__name__).error(f"analyze error", exc_info=True)
+        await msg.edit_text(f"Error: {type(e).__name__}: {e}")
 
 
 async def trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -147,7 +149,9 @@ async def trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ]]
         await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     except Exception as e:
-        await msg.edit_text(f"Error: {e}")
+        import logging
+        logging.getLogger(__name__).error(f"trade error", exc_info=True)
+        await msg.edit_text(f"Error: {type(e).__name__}: {e}")
 
 
 async def button_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
