@@ -32,7 +32,9 @@ class MarketAnalyzer:
             result = await self._ai.chat(ANALYSIS_SYSTEM_PROMPT, prompt)
             cleaned = result.strip().removeprefix("```json").removesuffix("```").strip()
             return json.loads(cleaned)
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"AI analysis failed: {e}", exc_info=True)
             return None
 
     def _build_prompt(self, symbol: str, market_type: str, data: dict) -> str:
