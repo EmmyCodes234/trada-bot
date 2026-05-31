@@ -72,12 +72,12 @@ async def analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         data = summarize_data(df)
         if not data:
-            await msg.edit_text(f"No data available for {symbol}")
+            await msg.edit_text(f"No data available for {symbol} from any source")
             return
 
         analysis = await analyzer.analyze(symbol, market_type, data)
         if not analysis:
-            await msg.edit_text(f"Analysis failed for {symbol}")
+            await msg.edit_text(f"AI analysis failed for {symbol}")
             return
 
         text = _format_analysis(symbol, analysis, data)

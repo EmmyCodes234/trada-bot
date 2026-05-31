@@ -24,14 +24,20 @@ def get_crypto_data(
     interval: str = "1d",
     limit: int = 30,
 ) -> Optional[pd.DataFrame]:
+    import logging
+    logger = logging.getLogger(__name__)
+
     yahoo_symbol = symbol.replace("/USDT", "-USD").replace("/USD", "-USD").split("/")[0] + "-USD"
+    logger.info(f"Fetching crypto data: {symbol} -> yahoo={yahoo_symbol}")
 
     try:
         df = get_stock_data(yahoo_symbol, interval="1d", period="2mo")
         if df is not None:
+            logger.info(f"Got {len(df)} rows from yfinance for {yahoo_symbol}")
             return df
-    except Exception:
-        pass
+        logger.warning(f"yfinance returned no data for {yahoo_symbol}")
+    except Exception as e:
+        logger.warning(f"yfinance failed for {yahoo_symbol}: {e}")
 
     import ccxt
     try:
