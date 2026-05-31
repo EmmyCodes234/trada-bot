@@ -1,34 +1,39 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from typing import Optional
+import logging
 
-from agents.market_analyzer import MarketAnalyzer
+from agents.ensemble_analyzer import EnsembleAnalyzer
 from agents.risk_manager import RiskManager
-from data.market_data import get_stock_data, get_crypto_data, summarize_data
+from agents.signal_logger import log_signal, log_trade, get_stats
+from data.market_data import get_multi_timeframe_data
 from exchanges.crypto import BinanceTestnetExchange
 from exchanges.stocks import AlpacaPaperExchange
 from config import settings
 
-analyzer = MarketAnalyzer()
+logger = logging.getLogger(__name__)
+analyzer = EnsembleAnalyzer()
 risk_manager = RiskManager()
 
+CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "DOGE", "XRP", "ADA", "DOT", "AVAX", "LINK", "MATIC", "UNI", "ATOM", "LTC", "BCH", "TRX", "BNB", "NEAR", "OP", "ARB"}
+
 HELP_TEXT = (
-    "/start — Show this menu\n"
-    "/analyze <symbol> — AI analysis (no trade)\n"
-    "/trade <symbol> — AI analysis + execute if signal\n"
+    "/start — Show menu\n"
+    "/analyze <symbol> — Full AI analysis (no trade)\n"
+    "/trade <symbol> — Analysis + execute if signal\n"
     "/portfolio — View open positions\n"
-    "/balance — Check account balance\n"
+    "/balance — Check balances\n"
+    "/stats — Signal/trade history\n"
     "/help — Show commands"
 )
 
-
-CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "DOGE", "XRP", "ADA", "DOT", "AVAX", "LINK", "MATIC", "UNI", "ATOM", "LTC", "BCH", "TRX"}
 
 def _detect_market(symbol: str) -> str:
     base = symbol.split("/")[0].upper()
     if "/" in symbol or base in CRYPTO_SYMBOLS:
         return "crypto"
     return "stocks"
+
 
 def _normalize_symbol(symbol: str) -> str:
     market = _detect_market(symbol)
@@ -37,16 +42,22 @@ def _normalize_symbol(symbol: str) -> str:
     return symbol.upper()
 
 
-def _format_num(n: Optional[float], decimals: int = 4) -> str:
+def _fmt(n: Optional[float], d: int = 4) -> str:
     if n is None:
         return "N/A"
-    return f"{n:.{decimals}f}"
+    return f"{n:.{d}f}"
 
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Trada — AI Trading Agent\n"
         "Powered by OpenModel.ai\n\n"
+        "Features:\n"
+        "- Multi-model ensemble (3 AI models vote)\n"
+        "- Multi-timeframe alignment (1h, 4h, 1d)\n"
+        "- Regime detection (trending/ranging/volatile)\n"
+        "- Volatility-adjusted position sizing\n"
+        "- Signal history tracking\n\n"
         f"{HELP_TEXT}"
     )
 
@@ -57,100 +68,115 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
-        await update.message.reply_text("Usage: /analyze <symbol>\nExample: /analyze BTC/USDT or /analyze AAPL")
+        await update.message.reply_text("Usage: /analyze <symbol>\nExample: /analyze BTC or /analyze AAPL")
         return
 
     symbol = _normalize_symbol(ctx.args[0])
-    market_type = _detect_market(symbol)
-    msg = await update.message.reply_text(f"Analyzing {symbol}...")
+    market = _detect_market(symbol)
+    msg = await update.message.reply_text(f"Analyzing {symbol} across 3 models and 3 timeframes...")
 
     try:
-        if market_type == "crypto":
-            df = get_crypto_data(symbol, interval="1d", limit=60)
-        else:
-            df = get_stock_data(symbol, interval="1d", period="2mo")
-
-        data = summarize_data(df)
-        if not data:
-            await msg.edit_text(f"No data available for {symbol} from any source")
+        multi_data = get_multi_timeframe_data(symbol, market)
+        if not multi_data:
+            await msg.edit_text(f"No data available for {symbol}")
             return
 
-        analysis = await analyzer.analyze(symbol, market_type, data)
-        if not analysis:
-            await msg.edit_text(f"AI analysis failed for {symbol}. Check Railway logs for details.")
+        result = await analyzer.analyze_all(symbol, market, multi_data)
+        if not result or result.get("signal") == "HOLD" and result.get("confidence", 0) == 0:
+            await msg.edit_text(f"Analysis failed for {symbol}")
             return
 
-        text = _format_analysis(symbol, analysis, data)
+        price = 0
+        for tf_data in multi_data.values():
+            if tf_data is not None and not tf_data.empty:
+                price = tf_data["close"].iloc[-1]
+                break
+
+        log_signal(
+            symbol=symbol,
+            signal=result.get("signal", "HOLD"),
+            confidence=result.get("confidence", 0),
+            regime=result.get("regime", "?"),
+            risk=result.get("risk", "?"),
+            price=price,
+            agreement=result.get("agreement", "?"),
+            models_used=result.get("models_used", 0),
+            reasoning=result.get("reasoning", ""),
+            stop_loss=result.get("stop_loss"),
+            take_profit=result.get("take_profit"),
+        )
+
+        text = _format_ensemble(symbol, result, price)
         await msg.edit_text(text, parse_mode="Markdown")
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"analyze error", exc_info=True)
+        logger.error(f"analyze error", exc_info=True)
         await msg.edit_text(f"Error: {type(e).__name__}: {e}")
 
 
 async def trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
-        await update.message.reply_text("Usage: /trade <symbol>\nExample: /trade BTC/USDT")
+        await update.message.reply_text("Usage: /trade <symbol>\nExample: /trade BTC")
         return
 
     symbol = _normalize_symbol(ctx.args[0])
-    market_type = _detect_market(symbol)
+    market = _detect_market(symbol)
     msg = await update.message.reply_text(f"Analyzing {symbol} for trade...")
 
     try:
-        if market_type == "crypto":
-            df = get_crypto_data(symbol, interval="1d", limit=60)
-        else:
-            df = get_stock_data(symbol, interval="1d", period="2mo")
-
-        data = summarize_data(df)
-        if not data:
+        multi_data = get_multi_timeframe_data(symbol, market)
+        if not multi_data:
             await msg.edit_text(f"No data available for {symbol}")
             return
 
-        analysis = await analyzer.analyze(symbol, market_type, data)
-        if not analysis:
-            await msg.edit_text(f"Analysis failed for {symbol}. Check Railway logs for details.")
-            return
+        result = await analyzer.analyze_all(symbol, market, multi_data)
+        signal = result.get("signal", "HOLD")
 
-        signal = analysis.get("signal", "HOLD")
+        price = 0
+        atr = None
+        regime = result.get("regime")
+        for tf_data in multi_data.values():
+            if tf_data is not None and not tf_data.empty:
+                price = tf_data["close"].iloc[-1]
+                break
+
+        text = _format_ensemble(symbol, result, price)
+        log_signal(symbol, signal, result.get("confidence", 0), regime, result.get("risk", "?"), price,
+                   result.get("agreement", "?"), result.get("models_used", 0), result.get("reasoning", ""))
+
         if signal == "HOLD":
-            text = _format_analysis(symbol, analysis, data)
             text += "\n\nNo actionable signal."
             await msg.edit_text(text, parse_mode="Markdown")
             return
 
-        balance = _get_balance(market_type)
-        current_price = data.get("current_price", 0)
+        balance = _get_balance(market)
         approved, reason = risk_manager.check_trade(
             signal=signal,
-            confidence=analysis.get("confidence", 0),
-            risk=analysis.get("risk", "MEDIUM"),
+            confidence=result.get("confidence", 0),
+            risk=result.get("risk", "MEDIUM"),
             balance=balance,
-            current_price=current_price,
-            suggested_stop=analysis.get("stop_loss"),
+            current_price=price,
+            suggested_stop=result.get("stop_loss"),
+            atr=atr,
+            regime=regime,
         )
 
-        text = _format_analysis(symbol, analysis, data)
         if not approved:
-            text += f"\n\nRisk check failed: {reason}"
+            text += f"\n\nRisk check: {reason}"
             await msg.edit_text(text, parse_mode="Markdown")
             return
 
-        max_pos = balance * (settings.max_position_size_pct / 100)
-        quantity = max_pos / current_price if current_price > 0 else 0
+        quantity = risk_manager.calculate_size(balance, price, atr, regime)
         side = "buy" if signal == "BUY" else "sell"
 
-        text += f"\n\nProposed: {side.upper()} {quantity:.4f} {symbol.split('/')[0] if market_type == 'crypto' else symbol} (~${max_pos:.2f})"
+        text += f"\n\nProposed: {side.upper()} {quantity:.4f} {symbol.split('/')[0] if market == 'crypto' else symbol} (~${quantity * price:.2f})"
 
         keyboard = [[
-            InlineKeyboardButton("Execute", callback_data=f"exec|{market_type}|{symbol}|{side}|{quantity}"),
+            InlineKeyboardButton("Execute", callback_data=f"exec|{market}|{symbol}|{side}|{quantity}|{result.get('confidence',0)}|{result.get('signal','?')}"),
             InlineKeyboardButton("Cancel", callback_data="cancel"),
         ]]
         await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"trade error", exc_info=True)
+        logger.error(f"trade error", exc_info=True)
         await msg.edit_text(f"Error: {type(e).__name__}: {e}")
 
 
@@ -165,21 +191,21 @@ async def button_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     parts = data.split("|")
     if parts[0] == "exec":
-        _, market_type, symbol, side, quantity = parts
+        _, market_type, symbol, side, quantity, confidence, signal = parts[:7]
         quantity = float(quantity)
+        confidence = int(confidence)
         try:
-            if market_type == "crypto":
-                ex = BinanceTestnetExchange()
-            else:
-                ex = AlpacaPaperExchange()
-
+            ex = BinanceTestnetExchange() if market_type == "crypto" else AlpacaPaperExchange()
+            price = ex.get_balance()
             if side == "buy":
-                ex.market_order(symbol, "buy", quantity)
+                order = ex.market_order(symbol, "buy", quantity)
             else:
-                ex.market_order(symbol, "sell", quantity)
+                order = ex.market_order(symbol, "sell", quantity)
 
-            await query.edit_message_text(f"Executed {side.upper()} {quantity:.4f} {symbol}")
+            log_trade(symbol, side, quantity, order.price or 0, order.status, signal, confidence, order_id=order.order_id)
+            await query.edit_message_text(f"Executed {side.upper()} {quantity:.4f} {symbol} (ID: {order.order_id})")
         except Exception as e:
+            log_trade(symbol, side, quantity, 0, "failed", signal, confidence, error=str(e))
             await query.edit_message_text(f"Order failed: {e}")
 
 
@@ -187,10 +213,7 @@ async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = ["Open Positions:\n"]
     try:
         for pos in AlpacaPaperExchange().get_all_positions():
-            lines.append(
-                f"{pos.symbol}: {pos.quantity:.2f} @ ${pos.current_price:.2f} "
-                f"({pos.unrealized_pnl_pct:+.2f}%)"
-            )
+            lines.append(f"{pos.symbol}: {pos.quantity:.2f} @ ${pos.current_price:.2f} ({pos.unrealized_pnl_pct:+.2f}%)")
         if len(lines) == 1:
             lines.append("No open positions.")
         await update.message.reply_text("\n".join(lines))
@@ -201,45 +224,49 @@ async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = ["Account Balances:\n"]
     try:
-        alpaca_bal = AlpacaPaperExchange().get_balance()
-        lines.append(f"Alpaca (Stocks): ${alpaca_bal:.2f}")
+        lines.append(f"Alpaca (Stocks): ${AlpacaPaperExchange().get_balance():.2f}")
     except Exception:
         lines.append("Alpaca: not configured")
-
     try:
-        binance_bal = BinanceTestnetExchange().get_balance("USDT")
-        lines.append(f"Binance Testnet: ${binance_bal:.2f}")
+        lines.append(f"Binance Testnet: ${BinanceTestnetExchange().get_balance('USDT'):.2f}")
     except Exception:
         lines.append("Binance: not configured")
-
     await update.message.reply_text("\n".join(lines))
 
 
-def _format_analysis(symbol: str, analysis: dict, data: dict) -> str:
-    signal = analysis.get("signal", "N/A")
-    confidence = analysis.get("confidence", "N/A")
-    risk = analysis.get("risk", "N/A")
-    reasoning = analysis.get("reasoning", "N/A")
-    entry = _format_num(analysis.get("suggested_entry"))
-    sl = _format_num(analysis.get("stop_loss"))
-    tp = _format_num(analysis.get("take_profit"))
+async def stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(get_stats())
 
-    signal_icon = {"BUY": "BUY", "SELL": "SELL", "HOLD": "HOLD"}.get(signal, signal)
 
-    lines = [
-        f"*{symbol}* — {signal_icon}",
-        f"Price: ${_format_num(data.get('current_price'))}",
-        f"Change: {data.get('change_pct', 'N/A')}%",
-        "",
-        f"Signal: {signal}",
-        f"Confidence: {confidence}%",
-        f"Risk: {risk}",
-        f"Reasoning: {reasoning}",
-        f"Entry: ${entry}",
-        f"Stop: ${sl}",
-        f"Take: ${tp}",
-    ]
-    return "\n".join(lines)
+def _format_ensemble(symbol: str, result: dict, price: float) -> str:
+    signal = result.get("signal", "N/A")
+    confidence = result.get("confidence", "N/A")
+    regime = result.get("regime", "N/A")
+    risk = result.get("risk", "N/A")
+    agreement = result.get("agreement", "N/A")
+    models = result.get("models_used", "N/A")
+    reasoning = result.get("reasoning", "N/A")
+    sl = _fmt(result.get("stop_loss"))
+    tp = _fmt(result.get("take_profit"))
+
+    tf_lines = ""
+    for tf, sig in result.get("timeframe_signals", []):
+        tf_lines += f"\n  {tf}: {sig}"
+
+    return (
+        f"*{symbol}* — ${_fmt(price)}\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"*Signal:* {signal}\n"
+        f"*Confidence:* {confidence}%\n"
+        f"*Regime:* {regime}\n"
+        f"*Risk:* {risk}\n"
+        f"*Agreement:* {agreement}\n"
+        f"*Models:* {models}\n"
+        f"*Timeframes:*{tf_lines}\n"
+        f"*Stop:* ${sl} | *Take:* ${tp}\n"
+        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"_{reasoning}_"
+    )
 
 
 def _get_balance(market_type: str) -> float:
