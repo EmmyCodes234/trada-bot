@@ -35,4 +35,7 @@ class OpenModelClient:
                 )
             resp.raise_for_status()
             data = resp.json()
-            return data["content"][0]["text"]
+            for block in data["content"]:
+                if block.get("type") == "text":
+                    return block["text"]
+            raise RuntimeError(f"No text block in response: {data}")
