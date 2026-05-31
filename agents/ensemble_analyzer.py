@@ -91,7 +91,7 @@ class EnsembleAnalyzer:
         risks = [p.get("risk", "MEDIUM") for p in parsed]
         high_risk_count = risks.count("HIGH")
 
-        reasoning_parts = [f"{p.get('_model','?')}: {p.get('reasoning','?')}" for p in parsed]
+        reasoning_parts = [p.get("reasoning", "?").strip() for p in parsed]
         reasoning = " | ".join(reasoning_parts)
 
         stop_losses = [p.get("stop_loss") for p in parsed if p.get("stop_loss")]

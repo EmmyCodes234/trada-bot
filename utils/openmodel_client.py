@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 from config import settings
 
@@ -48,11 +49,10 @@ class OpenModelClient:
             raise RuntimeError(f"No text in response: {data}")
 
     async def chat_ensemble(self, models: list[str], system_prompt: str, user_prompt: str) -> list[dict]:
-        results = []
-        for model in models:
+        async def _call(m: str) -> dict:
             try:
-                text = await self.chat(model, system_prompt, user_prompt, temperature=0.3)
-                results.append({"model": model, "text": text, "error": None})
+                text = await self.chat(m, system_prompt, user_prompt, temperature=0.3)
+                return {"model": m, "text": text, "error": None}
             except Exception as e:
-                results.append({"model": model, "text": None, "error": str(e)})
-        return results
+                return {"model": m, "text": None, "error": str(e)}
+        return await asyncio.gather(*[_call(m) for m in models])
