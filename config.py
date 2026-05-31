@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     openmodel_api_key: str = ""
     openmodel_base_url: str = "https://api.openmodel.ai"
-    analysis_model: str = "gpt-4o"
+    analysis_model: str = "deepseek-v4-flash"
 
     binance_testnet_api_key: Optional[str] = None
     binance_testnet_secret: Optional[str] = None

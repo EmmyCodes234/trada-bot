@@ -41,6 +41,16 @@ def get_crypto_data(
     coin_id = COINGECKO_IDS.get(base)
 
     headers = {"User-Agent": "TradaBot/1.0"}
+
+    try:
+        df = yf.Ticker(f"{base}-USD").history(period="2mo", interval="1d")
+        if df is not None and not df.empty:
+            df.columns = [c.lower() for c in df.columns]
+            logger.info(f"Got {len(df)} rows from yfinance for {base}-USD")
+            return df
+    except Exception as e:
+        logger.warning(f"yfinance failed for {base}-USD: {e}")
+
     if coin_id:
         try:
             url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
@@ -55,18 +65,9 @@ def get_crypto_data(
                     df["volume"] = 0
                     logger.info(f"Got {len(df)} rows from CoinGecko for {base}")
                     return df
-            logger.warning(f"CoinGecko failed: status={resp.status_code}")
+            logger.warning(f"CoinGecko failed: status={resp.status_code}, body={resp.text[:200]}")
         except Exception as e:
             logger.warning(f"CoinGecko error for {coin_id}: {e}")
-
-    try:
-        df = yf.Ticker(f"{base}-USD").history(period="2mo", interval="1d")
-        if df is not None and not df.empty:
-            df.columns = [c.lower() for c in df.columns]
-            logger.info(f"Got {len(df)} rows from yfinance for {base}-USD")
-            return df
-    except Exception as e:
-        logger.warning(f"yfinance failed for {base}-USD: {e}")
 
     try:
         import ccxt

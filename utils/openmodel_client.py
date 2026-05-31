@@ -9,27 +9,30 @@ class OpenModelClient:
         self.model = settings.analysis_model
 
     async def chat(self, system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
-        url = f"{self.base_url}/v1/responses"
+        url = f"{self.base_url}/v1/messages"
         payload = {
             "model": self.model,
-            "instructions": system_prompt,
-            "input": user_prompt,
+            "system": system_prompt,
+            "max_tokens": 2048,
+            "messages": [
+                {"role": "user", "content": user_prompt},
+            ],
             "temperature": temperature,
         }
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 url,
                 headers={
-                    "Authorization": f"Bearer {self.api_key}",
+                    "x-api-key": self.api_key,
                     "Content-Type": "application/json",
+                    "anthropic-version": "2023-06-01",
                 },
                 json=payload,
             )
             if resp.status_code == 404:
                 raise RuntimeError(
-                    f"OpenModel API 404. Key starts with: '{self.api_key[:12]}...'. "
-                    f"Verify it's valid at console.openmodel.ai"
+                    f"Model '{self.model}' not available. Check Railway > Variables > ANALYSIS_MODEL"
                 )
             resp.raise_for_status()
             data = resp.json()
-            return data["output"][0]["content"][0]["text"]
+            return data["content"][0]["text"]
