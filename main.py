@@ -1,4 +1,3 @@
-import os
 import sys
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 from config import settings
@@ -24,20 +23,8 @@ def main():
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    webhook_url = os.environ.get("WEBHOOK_URL", "")
-    if webhook_url:
-        port = int(os.environ.get("PORT", 10000))
-        print(f"Starting webhook mode on port {port}...")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path=settings.telegram_bot_token,
-            webhook_url=f"{webhook_url}/{settings.telegram_bot_token}",
-            allowed_updates=["message", "callback_query"],
-        )
-    else:
-        print("Trada bot running (polling mode)...")
-        app.run_polling(allowed_updates=["message", "callback_query"])
+    print("Trada bot running...")
+    app.run_polling(allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":
