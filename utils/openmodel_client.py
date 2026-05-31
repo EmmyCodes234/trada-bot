@@ -12,10 +12,8 @@ class OpenModelClient:
         url = f"{self.base_url}/v1/responses"
         payload = {
             "model": self.model,
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
+            "instructions": system_prompt,
+            "input": user_prompt,
             "temperature": temperature,
         }
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -29,8 +27,8 @@ class OpenModelClient:
             )
             if resp.status_code == 404:
                 raise RuntimeError(
-                    f"OpenModel API returned 404. Make sure OPENMODEL_API_KEY is set correctly "
-                    f"in Railway env vars. Got key: '{self.api_key[:8]}...'"
+                    f"OpenModel API 404. Key starts with: '{self.api_key[:12]}...'. "
+                    f"Verify it's valid at console.openmodel.ai"
                 )
             resp.raise_for_status()
             data = resp.json()
