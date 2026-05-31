@@ -24,20 +24,23 @@ def get_crypto_data(
     interval: str = "1d",
     limit: int = 30,
 ) -> Optional[pd.DataFrame]:
-    import ccxt
+    yahoo_symbol = symbol.replace("/USDT", "-USD").replace("/USD", "-USD").split("/")[0] + "-USD"
 
-    exchange = ccxt.binance()
-    timeframe_map = {
-        "1m": "1m",
-        "5m": "5m",
-        "15m": "15m",
-        "1h": "1h",
-        "4h": "4h",
-        "1d": "1d",
-        "1w": "1w",
-    }
-    tf = timeframe_map.get(interval, "1d")
     try:
+        df = get_stock_data(yahoo_symbol, interval="1d", period="2mo")
+        if df is not None:
+            return df
+    except Exception:
+        pass
+
+    import ccxt
+    try:
+        exchange = ccxt.binance()
+        timeframe_map = {
+            "1m": "1m", "5m": "5m", "15m": "15m",
+            "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w",
+        }
+        tf = timeframe_map.get(interval, "1d")
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=limit)
         df = pd.DataFrame(
             ohlcv,

@@ -22,10 +22,19 @@ HELP_TEXT = (
 )
 
 
+CRYPTO_SYMBOLS = {"BTC", "ETH", "SOL", "DOGE", "XRP", "ADA", "DOT", "AVAX", "LINK", "MATIC", "UNI", "ATOM", "LTC", "BCH", "TRX"}
+
 def _detect_market(symbol: str) -> str:
-    if "/" in symbol.upper():
+    base = symbol.split("/")[0].upper()
+    if "/" in symbol or base in CRYPTO_SYMBOLS:
         return "crypto"
     return "stocks"
+
+def _normalize_symbol(symbol: str) -> str:
+    market = _detect_market(symbol)
+    if market == "crypto" and "/" not in symbol:
+        symbol = symbol.upper() + "/USDT"
+    return symbol.upper()
 
 
 def _format_num(n: Optional[float], decimals: int = 4) -> str:
@@ -51,7 +60,7 @@ async def analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /analyze <symbol>\nExample: /analyze BTC/USDT or /analyze AAPL")
         return
 
-    symbol = ctx.args[0].upper()
+    symbol = _normalize_symbol(ctx.args[0])
     market_type = _detect_market(symbol)
     msg = await update.message.reply_text(f"Analyzing {symbol}...")
 
@@ -82,7 +91,7 @@ async def trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /trade <symbol>\nExample: /trade BTC/USDT")
         return
 
-    symbol = ctx.args[0].upper()
+    symbol = _normalize_symbol(ctx.args[0])
     market_type = _detect_market(symbol)
     msg = await update.message.reply_text(f"Analyzing {symbol} for trade...")
 
