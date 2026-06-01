@@ -8,6 +8,7 @@ from agents.risk_manager import RiskManager
 from agents.signal_logger import log_signal, log_trade, get_stats
 from data.market_data import get_multi_timeframe_data
 from exchanges.crypto import BinanceTestnetExchange, BybitTestnetExchange, get_crypto_exchange
+from exchanges.paper import PaperExchange
 from exchanges.stocks import AlpacaPaperExchange
 from config import settings
 
@@ -214,11 +215,18 @@ async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         for pos in AlpacaPaperExchange().get_all_positions():
             lines.append(f"{pos.symbol}: {pos.quantity:.2f} @ ${pos.current_price:.2f} ({pos.unrealized_pnl_pct:+.2f}%)")
-        if len(lines) == 1:
-            lines.append("No open positions.")
-        await update.message.reply_text("\n".join(lines))
     except Exception as e:
-        await update.message.reply_text(f"Error: {e}")
+        logger.error(f"Alpaca positions error: {e}")
+    try:
+        ex = get_crypto_exchange()
+        if isinstance(ex, PaperExchange):
+            for pos in ex.get_all_positions():
+                lines.append(f"{pos.symbol}: {pos.quantity:.6f} @ ${pos.current_price:.2f} ({pos.unrealized_pnl_pct:+.2f}%)")
+    except Exception as e:
+        logger.error(f"Crypto positions error: {e}")
+    if len(lines) == 1:
+        lines.append("No open positions.")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -231,8 +239,12 @@ async def balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         ex = get_crypto_exchange()
         bal = ex.get_balance("USDT")
-        name = "Bybit Testnet" if isinstance(ex, BybitTestnetExchange) else "Binance Testnet"
-        lines.append(f"{name}: ${bal:.2f}")
+        if isinstance(ex, PaperExchange):
+            lines.append(f"Paper Wallet: ${bal:.2f}")
+        elif isinstance(ex, BybitTestnetExchange):
+            lines.append(f"Bybit Testnet: ${bal:.2f}")
+        else:
+            lines.append(f"Binance Testnet: ${bal:.2f}")
     except Exception as e:
         logger.error(f"Crypto exchange balance error: {e}")
         lines.append("Crypto exchange: not configured")

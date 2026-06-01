@@ -123,8 +123,13 @@ class BybitTestnetExchange(BaseExchange):
 
 
 def get_crypto_exchange():
-    api_key = settings.bybit_testnet_api_key
-    api_secret = settings.bybit_testnet_secret
-    if api_key and api_secret and api_key != "your_bybit_testnet_key":
+    from .paper import PaperExchange
+    bybit_key = settings.bybit_testnet_api_key
+    bybit_secret = settings.bybit_testnet_secret
+    binance_key = settings.binance_testnet_api_key
+    binance_secret = settings.binance_testnet_secret
+    if bybit_key and bybit_secret and bybit_key != "your_bybit_testnet_key":
         return BybitTestnetExchange()
-    return BinanceTestnetExchange()
+    if binance_key and binance_secret and binance_key != "your_binance_testnet_key":
+        return BinanceTestnetExchange()
+    return PaperExchange()
