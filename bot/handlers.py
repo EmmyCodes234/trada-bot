@@ -25,6 +25,7 @@ HELP_TEXT = (
     "/portfolio — View open positions\n"
     "/balance — Check balances\n"
     "/stats — Signal/trade history\n"
+    "/reset — Reset paper wallet to $10,000\n"
     "/help — Show commands"
 )
 
@@ -253,6 +254,15 @@ async def balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(get_stats())
+
+
+async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ex = get_crypto_exchange()
+    if isinstance(ex, PaperExchange):
+        ex.reset()
+        await update.message.reply_text("Paper wallet reset to $10,000. All positions cleared.")
+    else:
+        await update.message.reply_text("Reset only available for paper exchange.")
 
 
 def _format_ensemble(symbol: str, result: dict, price: float) -> str:
