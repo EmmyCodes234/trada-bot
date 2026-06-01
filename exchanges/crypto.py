@@ -9,15 +9,10 @@ class BinanceTestnetExchange(BaseExchange):
         self._exchange = ccxt.binance({
             "apiKey": settings.binance_testnet_api_key,
             "secret": settings.binance_testnet_secret,
-            "urls": {
-                "api": {
-                    "public": "https://testnet.binance.vision/api/v3",
-                    "private": "https://testnet.binance.vision/api/v3",
-                }
-            },
             "options": {"defaultType": "spot"},
             "enableRateLimit": True,
         })
+        self._exchange.set_sandbox_mode(True)
 
     def get_balance(self, currency: str = "USDT") -> float:
         balance = self._exchange.fetch_balance()

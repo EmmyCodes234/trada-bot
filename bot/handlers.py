@@ -225,11 +225,13 @@ async def balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     lines = ["Account Balances:\n"]
     try:
         lines.append(f"Alpaca (Stocks): ${AlpacaPaperExchange().get_balance():.2f}")
-    except Exception:
+    except Exception as e:
+        logger.error(f"Alpaca balance error: {e}")
         lines.append("Alpaca: not configured")
     try:
         lines.append(f"Binance Testnet: ${BinanceTestnetExchange().get_balance('USDT'):.2f}")
-    except Exception:
+    except Exception as e:
+        logger.error(f"Binance balance error: {e}")
         lines.append("Binance: not configured")
     await update.message.reply_text("\n".join(lines))
 
