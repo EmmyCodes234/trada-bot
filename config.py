@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     binance_testnet_api_key: Optional[str] = None
     binance_testnet_secret: Optional[str] = None
 
+    bybit_testnet_api_key: Optional[str] = None
+    bybit_testnet_secret: Optional[str] = None
+
     alpaca_api_key: Optional[str] = None
     alpaca_secret_key: Optional[str] = None
     alpaca_paper: bool = True

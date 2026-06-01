@@ -7,7 +7,7 @@ from agents.ensemble_analyzer import EnsembleAnalyzer
 from agents.risk_manager import RiskManager
 from agents.signal_logger import log_signal, log_trade, get_stats
 from data.market_data import get_multi_timeframe_data
-from exchanges.crypto import BinanceTestnetExchange
+from exchanges.crypto import BinanceTestnetExchange, BybitTestnetExchange, get_crypto_exchange
 from exchanges.stocks import AlpacaPaperExchange
 from config import settings
 
@@ -195,7 +195,7 @@ async def button_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         quantity = float(quantity)
         confidence = int(confidence)
         try:
-            ex = BinanceTestnetExchange() if market_type == "crypto" else AlpacaPaperExchange()
+            ex = get_crypto_exchange() if market_type == "crypto" else AlpacaPaperExchange()
             price = ex.get_balance()
             if side == "buy":
                 order = ex.market_order(symbol, "buy", quantity)
@@ -229,10 +229,13 @@ async def balance(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Alpaca balance error: {e}")
         lines.append("Alpaca: not configured")
     try:
-        lines.append(f"Binance Testnet: ${BinanceTestnetExchange().get_balance('USDT'):.2f}")
+        ex = get_crypto_exchange()
+        bal = ex.get_balance("USDT")
+        name = "Bybit Testnet" if isinstance(ex, BybitTestnetExchange) else "Binance Testnet"
+        lines.append(f"{name}: ${bal:.2f}")
     except Exception as e:
-        logger.error(f"Binance balance error: {e}")
-        lines.append("Binance: not configured")
+        logger.error(f"Crypto exchange balance error: {e}")
+        lines.append("Crypto exchange: not configured")
     await update.message.reply_text("\n".join(lines))
 
 
@@ -274,7 +277,7 @@ def _format_ensemble(symbol: str, result: dict, price: float) -> str:
 def _get_balance(market_type: str) -> float:
     try:
         if market_type == "crypto":
-            return BinanceTestnetExchange().get_balance("USDT")
+            return get_crypto_exchange().get_balance("USDT")
         return AlpacaPaperExchange().get_balance()
     except Exception:
         return 0.0
