@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import ContextTypes
 from typing import Optional
 import logging
@@ -6,8 +6,10 @@ import logging
 from agents.ensemble_analyzer import EnsembleAnalyzer
 from agents.risk_manager import RiskManager
 from agents.signal_logger import log_signal, log_trade, get_stats
+from agents.auto_trader import auto_trader
+from agents.scanner import scanner
 from data.market_data import get_multi_timeframe_data
-from exchanges.crypto import BinanceTestnetExchange, BybitTestnetExchange, get_crypto_exchange
+from exchanges.crypto import get_crypto_exchange
 from exchanges.paper import PaperExchange
 from exchanges.stocks import AlpacaPaperExchange
 from config import settings
@@ -22,9 +24,14 @@ HELP_TEXT = (
     "/start — Show menu\n"
     "/analyze <symbol> — Full AI analysis (no trade)\n"
     "/trade <symbol> — Analysis + execute if signal\n"
+    "/scan — Scan top crypto for signals\n"
+    "/autotrade — Auto-trade mode status\n"
+    "/autotrade on [confidence] — Enable auto-trade\n"
+    "/autotrade off — Disable auto-trade\n"
     "/portfolio — View open positions\n"
     "/balance — Check balances\n"
-    "/stats — Signal/trade history\n"
+    "/performance — P&L and trade stats\n"
+    "/stats — Signal history\n"
     "/reset — Reset paper wallet to $10,000\n"
     "/help — Show commands"
 )
@@ -59,7 +66,9 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "- Multi-timeframe alignment (1h, 4h, 1d)\n"
         "- Regime detection (trending/ranging/volatile)\n"
         "- Volatility-adjusted position sizing\n"
-        "- Signal history tracking\n\n"
+        "- Auto-trade mode (autonomous execution)\n"
+        "- Market scanner\n"
+        "- Signal & performance tracking\n\n"
         f"{HELP_TEXT}"
     )
 
@@ -68,47 +77,73 @@ async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(HELP_TEXT)
 
 
+async def _do_trade(symbol: str, auto: bool = False) -> str:
+    market = _detect_market(symbol)
+    multi_data = get_multi_timeframe_data(symbol, market)
+    if not multi_data:
+        return f"No data available for {symbol}"
+
+    result = await analyzer.analyze_all(symbol, market, multi_data)
+    signal = result.get("signal", "HOLD")
+
+    price = 0
+    for tf_data in multi_data.values():
+        if tf_data is not None and not tf_data.empty:
+            price = tf_data["close"].iloc[-1]
+            break
+
+    text = _format_ensemble(symbol, result, price)
+    log_signal(symbol, signal, result.get("confidence", 0), result.get("regime", "?"),
+               result.get("risk", "?"), price, result.get("agreement", "?"),
+               result.get("models_used", 0), result.get("reasoning", ""))
+
+    if signal == "HOLD":
+        return text + "\n\nNo actionable signal."
+
+    balance = _get_balance(market)
+    approved, reason = risk_manager.check_trade(
+        signal=signal,
+        confidence=result.get("confidence", 0),
+        risk=result.get("risk", "MEDIUM"),
+        balance=balance,
+        current_price=price,
+        suggested_stop=result.get("stop_loss"),
+        atr=result.get("atr"),
+        regime=result.get("regime"),
+    )
+
+    if not approved:
+        return text + f"\n\nRisk check: {reason}"
+
+    quantity = risk_manager.calculate_size(balance, price, result.get("atr"), result.get("regime"))
+    side = "buy" if signal == "BUY" else "sell"
+
+    if auto:
+        ex = get_crypto_exchange() if market == "crypto" else AlpacaPaperExchange()
+        if market == "crypto" and not isinstance(ex, PaperExchange):
+            return text + f"\n\nAuto-trade requires paper exchange."
+        try:
+            order = ex.market_order(symbol, side, quantity)
+            log_trade(symbol, side, quantity, order.price or price, order.status,
+                      signal, result.get("confidence", 0), order_id=order.order_id)
+            auto_trader.record_trade()
+            return text + f"\n\nAuto-executed: {side.upper()} {quantity:.4f} @ ${order.price or price:.2f} (ID: {order.order_id})"
+        except Exception as e:
+            return text + f"\n\nAuto-execution failed: {e}"
+
+    text += f"\n\nProposed: {side.upper()} {quantity:.4f} ({symbol}) ~${quantity * price:.2f}"
+    text += f"\n/confirm {side} {symbol} {quantity:.4f} {result.get('confidence',0)}"
+    return text
+
+
 async def analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await update.message.reply_text("Usage: /analyze <symbol>\nExample: /analyze BTC or /analyze AAPL")
         return
-
     symbol = _normalize_symbol(ctx.args[0])
-    market = _detect_market(symbol)
-    msg = await update.message.reply_text(f"Analyzing {symbol} across 3 models and 3 timeframes...")
-
+    msg = await update.message.reply_text(f"Analyzing {symbol}...")
     try:
-        multi_data = get_multi_timeframe_data(symbol, market)
-        if not multi_data:
-            await msg.edit_text(f"No data available for {symbol}")
-            return
-
-        result = await analyzer.analyze_all(symbol, market, multi_data)
-        if not result or result.get("signal") == "HOLD" and result.get("confidence", 0) == 0:
-            await msg.edit_text(f"Analysis failed for {symbol}")
-            return
-
-        price = 0
-        for tf_data in multi_data.values():
-            if tf_data is not None and not tf_data.empty:
-                price = tf_data["close"].iloc[-1]
-                break
-
-        log_signal(
-            symbol=symbol,
-            signal=result.get("signal", "HOLD"),
-            confidence=result.get("confidence", 0),
-            regime=result.get("regime", "?"),
-            risk=result.get("risk", "?"),
-            price=price,
-            agreement=result.get("agreement", "?"),
-            models_used=result.get("models_used", 0),
-            reasoning=result.get("reasoning", ""),
-            stop_loss=result.get("stop_loss"),
-            take_profit=result.get("take_profit"),
-        )
-
-        text = _format_ensemble(symbol, result, price)
+        text = await _do_trade(symbol)
         await msg.edit_text(text, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"analyze error", exc_info=True)
@@ -119,96 +154,37 @@ async def trade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await update.message.reply_text("Usage: /trade <symbol>\nExample: /trade BTC")
         return
-
     symbol = _normalize_symbol(ctx.args[0])
-    market = _detect_market(symbol)
     msg = await update.message.reply_text(f"Analyzing {symbol} for trade...")
-
     try:
-        multi_data = get_multi_timeframe_data(symbol, market)
-        if not multi_data:
-            await msg.edit_text(f"No data available for {symbol}")
-            return
-
-        result = await analyzer.analyze_all(symbol, market, multi_data)
-        signal = result.get("signal", "HOLD")
-
-        price = 0
-        atr = None
-        regime = result.get("regime")
-        for tf_data in multi_data.values():
-            if tf_data is not None and not tf_data.empty:
-                price = tf_data["close"].iloc[-1]
-                break
-
-        text = _format_ensemble(symbol, result, price)
-        log_signal(symbol, signal, result.get("confidence", 0), regime, result.get("risk", "?"), price,
-                   result.get("agreement", "?"), result.get("models_used", 0), result.get("reasoning", ""))
-
-        if signal == "HOLD":
-            text += "\n\nNo actionable signal."
-            await msg.edit_text(text, parse_mode="Markdown")
-            return
-
-        balance = _get_balance(market)
-        approved, reason = risk_manager.check_trade(
-            signal=signal,
-            confidence=result.get("confidence", 0),
-            risk=result.get("risk", "MEDIUM"),
-            balance=balance,
-            current_price=price,
-            suggested_stop=result.get("stop_loss"),
-            atr=atr,
-            regime=regime,
-        )
-
-        if not approved:
-            text += f"\n\nRisk check: {reason}"
-            await msg.edit_text(text, parse_mode="Markdown")
-            return
-
-        quantity = risk_manager.calculate_size(balance, price, atr, regime)
-        side = "buy" if signal == "BUY" else "sell"
-
-        text += f"\n\nProposed: {side.upper()} {quantity:.4f} {symbol.split('/')[0] if market == 'crypto' else symbol} (~${quantity * price:.2f})"
-
-        keyboard = [[
-            InlineKeyboardButton("Execute", callback_data=f"exec|{market}|{symbol}|{side}|{quantity}|{result.get('confidence',0)}|{result.get('signal','?')}"),
-            InlineKeyboardButton("Cancel", callback_data="cancel"),
-        ]]
-        await msg.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        if auto_trader.enabled and auto_trader.can_trade()[0]:
+            text = await _do_trade(symbol, auto=True)
+        else:
+            text = await _do_trade(symbol, auto=False)
+        await msg.edit_text(text, parse_mode="Markdown")
     except Exception as e:
         logger.error(f"trade error", exc_info=True)
         await msg.edit_text(f"Error: {type(e).__name__}: {e}")
 
 
-async def button_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "cancel":
-        await query.edit_message_text("Trade cancelled.")
+async def confirm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args or len(ctx.args) < 4:
+        await update.message.reply_text("Usage: /confirm <side> <symbol> <quantity> <confidence>")
         return
-
-    parts = data.split("|")
-    if parts[0] == "exec":
-        _, market_type, symbol, side, quantity, confidence, signal = parts[:7]
-        quantity = float(quantity)
-        confidence = int(confidence)
-        try:
-            ex = get_crypto_exchange() if market_type == "crypto" else AlpacaPaperExchange()
-            price = ex.get_balance()
-            if side == "buy":
-                order = ex.market_order(symbol, "buy", quantity)
-            else:
-                order = ex.market_order(symbol, "sell", quantity)
-
-            log_trade(symbol, side, quantity, order.price or 0, order.status, signal, confidence, order_id=order.order_id)
-            await query.edit_message_text(f"Executed {side.upper()} {quantity:.4f} {symbol} (ID: {order.order_id})")
-        except Exception as e:
-            log_trade(symbol, side, quantity, 0, "failed", signal, confidence, error=str(e))
-            await query.edit_message_text(f"Order failed: {e}")
+    side, symbol, qty_str, conf_str = ctx.args[0], _normalize_symbol(ctx.args[1]), ctx.args[2], ctx.args[3]
+    quantity, confidence = float(qty_str), int(conf_str)
+    market = _detect_market(symbol)
+    try:
+        ex = get_crypto_exchange() if market == "crypto" else AlpacaPaperExchange()
+        order = ex.market_order(symbol, side, quantity)
+        log_trade(symbol, side, quantity, order.price or 0, order.status,
+                  "MANUAL", confidence, order_id=order.order_id)
+        await update.message.reply_text(
+            f"Executed {side.upper()} {quantity:.4f} {symbol} @ ${order.price or 0:.2f} (ID: {order.order_id})"
+        )
+    except Exception as e:
+        log_trade(symbol, side, quantity, 0, "failed", "MANUAL", confidence, error=str(e))
+        await update.message.reply_text(f"Order failed: {e}")
 
 
 async def portfolio(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -256,13 +232,94 @@ async def stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(get_stats())
 
 
-async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def reset_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ex = get_crypto_exchange()
     if isinstance(ex, PaperExchange):
         ex.reset()
         await update.message.reply_text("Paper wallet reset to $10,000. All positions cleared.")
     else:
         await update.message.reply_text("Reset only available for paper exchange.")
+
+
+async def autotrade(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text(auto_trader.status())
+        return
+    cmd = ctx.args[0].lower()
+    if cmd == "on":
+        threshold = int(ctx.args[1]) if len(ctx.args) > 1 else 75
+        auto_trader.enable(threshold=threshold)
+        await update.message.reply_text(
+            f"Auto-trade enabled (min confidence: {threshold}%, daily limit: {auto_trader.max_daily_trades})"
+        )
+    elif cmd == "off":
+        auto_trader.disable()
+        await update.message.reply_text("Auto-trade disabled.")
+    else:
+        await update.message.reply_text(auto_trader.status())
+
+
+async def scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    msg = await update.message.reply_text("Scanning top crypto for signals...")
+    try:
+        results = await scanner.scan()
+        if not results:
+            await msg.edit_text("No results.")
+            return
+
+        lines = ["Market Scan:\n"]
+        for r in results:
+            sig = r["signal"]
+            icon = {"BUY": "▲", "SELL": "▼", "HOLD": "―"}.get(sig, "?")
+            sym = r["symbol"]
+            conf = r["confidence"]
+            regime = r["regime"]
+            price = _fmt(r["price"])
+            lines.append(f"{icon} *{sym}* — {sig} ({conf}%) | ${price} | {regime}")
+
+        lines.append(f"\nScanned {len(results)} symbols")
+        await msg.edit_text("\n".join(lines), parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"scan error", exc_info=True)
+        await msg.edit_text(f"Scan failed: {e}")
+
+
+async def performance(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ex = get_crypto_exchange()
+    if not isinstance(ex, PaperExchange):
+        await update.message.reply_text("Performance only available for paper exchange.")
+        return
+
+    balance = ex.get_balance("USDT")
+    holdings = ex.holdings
+    trades = ex.trades
+    n_trades = len(trades)
+
+    lines = ["Performance:\n"]
+    lines.append(f"Total value: ${balance:.2f}")
+    if holdings:
+        for asset, qty in holdings.items():
+            pos = ex.get_position(f"{asset}/USDT")
+            if pos:
+                lines.append(f"{asset}: {qty:.6f} ({pos.unrealized_pnl_pct:+.2f}%)")
+
+    if n_trades > 0:
+        buys = [t for t in trades if t["side"] == "buy"]
+        sells = [t for t in trades if t["side"] == "sell"]
+        total_bought = sum(t["cost"] for t in buys)
+        total_sold = sum(t["cost"] for t in sells)
+        realized_pnl = total_sold - total_bought
+        lines.append(f"Trades: {n_trades} ({len(buys)} buys, {len(sells)} sells)")
+        lines.append(f"Realized P&L: ${realized_pnl:+.2f}")
+
+        if n_trades >= 2:
+            costs = [t["cost"] for t in trades if t["cost"] > 0]
+            avg_trade = sum(costs) / len(costs) if costs else 0
+            lines.append(f"Avg trade size: ${avg_trade:.2f}")
+    else:
+        lines.append("No trades yet.")
+
+    await update.message.reply_text("\n".join(lines))
 
 
 def _format_ensemble(symbol: str, result: dict, price: float) -> str:
@@ -282,7 +339,7 @@ def _format_ensemble(symbol: str, result: dict, price: float) -> str:
 
     return (
         f"*{symbol}* — ${_fmt(price)}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"-----------------------\n"
         f"*Signal:* {signal}\n"
         f"*Confidence:* {confidence}%\n"
         f"*Regime:* {regime}\n"
@@ -291,7 +348,7 @@ def _format_ensemble(symbol: str, result: dict, price: float) -> str:
         f"*Models:* {models}\n"
         f"*Timeframes:*{tf_lines}\n"
         f"*Stop:* ${sl} | *Take:* ${tp}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
+        f"-----------------------\n"
         f"_{reasoning}_"
     )
 

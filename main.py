@@ -1,7 +1,10 @@
 import sys
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler
 from config import settings
-from bot.handlers import start, help_cmd, analyze, trade, button_callback, portfolio, balance, stats, reset
+from bot.handlers import (
+    start, help_cmd, analyze, trade, confirm,
+    portfolio, balance, stats, reset_cmd, autotrade, scan, performance,
+)
 
 
 def main():
@@ -19,11 +22,14 @@ def main():
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("analyze", analyze))
     app.add_handler(CommandHandler("trade", trade))
+    app.add_handler(CommandHandler("confirm", confirm))
     app.add_handler(CommandHandler("portfolio", portfolio))
     app.add_handler(CommandHandler("balance", balance))
     app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CallbackQueryHandler(button_callback))
+    app.add_handler(CommandHandler("reset", reset_cmd))
+    app.add_handler(CommandHandler("autotrade", autotrade))
+    app.add_handler(CommandHandler("scan", scan))
+    app.add_handler(CommandHandler("performance", performance))
 
     print("Trada bot running...")
     app.run_polling(allowed_updates=["message", "callback_query"])
